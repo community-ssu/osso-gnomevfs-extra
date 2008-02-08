@@ -1,3 +1,14 @@
+2008-01-23  Richard Hult  <richard@imendio.com>
+
+	* obex-module/src/obex-method.c: (do_close): Send abort through
+	gwobex API, if cancelled.
+	(do_read), (do_write):
+	(do_open_directory), (om_get_file_info_helper), (do_get_file_info),
+	(do_get_file_info_from_handle): Try to return early if cancelled.
+
+	* obex-module/src/om-utils.c: (om_utils_obex_error_to_vfs_result):
+	Add human readable errors for the rest of the GW_* error codes.
+
 2007-08-10  Martyn Russell  <martyn@imendio.com>
 
 	* debian/rules: Fix building with the new Scratchbox toolchain,
