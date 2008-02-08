@@ -900,19 +900,56 @@ do_close (GnomeVFSMethod       *method,
 	result = GNOME_VFS_OK;
 	handle = (FileHandle *) method_handle;
 
-	/* Cancellation context is not used in this function */
-
 	conn = om_get_connection (handle->uri, &result);
 	if (conn == NULL) {
 		return result;
 	}
 
-	dv(g_printerr ("do_close: calling gw_obex_xfer_close()\n"));
-
 	if (handle->xfer) {
-		success = gw_obex_xfer_close (handle->xfer, &error);
-		gw_obex_xfer_free (handle->xfer);
+		d(g_printerr ("obex, do_close: checking cancellation\n"));
 
+		if (gnome_vfs_context_check_cancellation (context)) {
+			/* We need this because gw_obex_xfer_abort triggers
+			 * gw_obex_xfer_close, which in turns does some
+			 * communication with the phone, where we need the
+			 * cancellation to get picked up again. NOTE: This
+			 * probably doesn't help since gwobex is used in
+			 * blocking mode.
+			 */
+			if (handle->mode & GNOME_VFS_OPEN_WRITE) {
+				om_set_cancel_context (conn, context);
+
+				/* For some reason that we haven't been able to find (a
+				 * race in gwobex?) we must sleep a bit before trying to
+				 * abort, otherwise the abort call has no effect.
+				 */
+				g_usleep (0.5*G_USEC_PER_SEC);
+
+				d(g_printerr ("obex, do_close: try sending abort\n"));
+				gw_obex_xfer_abort (handle->xfer, &error);
+				d(g_printerr ("obex, do_close: after sending abort: %d\n", error));
+
+				om_set_cancel_context (conn, NULL);
+			} else {
+				/* Just closing is enough to abort nicely when
+				 * in read mode.
+				 */
+				d(g_printerr ("do_close: read mode, just closing\n"));
+				om_set_cancel_context (conn, context);
+				gw_obex_xfer_close (handle->xfer, &error);
+				om_set_cancel_context (conn, NULL);
+			}
+
+			/* Ignore any error, we always want "abort", which
+			 * translates to GNOME_VFS_ERROR_CANCELLED.
+			 */
+			success = FALSE;
+			error = GW_OBEX_ERROR_ABORT;
+		} else {
+			success = gw_obex_xfer_close (handle->xfer, &error);
+		}
+
+		gw_obex_xfer_free (handle->xfer);
 		handle->xfer = NULL;
 	} else {
 		success = TRUE;
@@ -959,7 +996,15 @@ do_read (GnomeVFSMethod       *method,
 
 	handle = (FileHandle *) method_handle;
 
-	/* Cancellation context is not used in this function */
+	*bytes_read = 0;
+
+	/* If cancelled, we return directly. The obex aborting is done in
+	 * close(), which must be called anyway. This simplifies the code a lot.
+	 */
+	if (gnome_vfs_context_check_cancellation (context)) {
+		d(g_printerr ("do_read: returning directly, cancelled\n"));
+		return GNOME_VFS_ERROR_CANCELLED;
+	}
 
 	if (!handle->xfer) {
 		if (handle->has_eof) {
@@ -1029,7 +1074,7 @@ do_write (GnomeVFSMethod       *method,
 
 	handle = (FileHandle *) method_handle;
 
-	/* Cancellation context is not used here */
+	*bytes_written = 0;
 
 	if (!handle->xfer) {
 		return GNOME_VFS_ERROR_NOT_OPEN;
@@ -1037,6 +1082,14 @@ do_write (GnomeVFSMethod       *method,
 
 	if (!(handle->mode & GNOME_VFS_OPEN_WRITE)) {
 		return GNOME_VFS_ERROR_READ_ONLY;
+	}
+
+	/* If cancelled, we return directly. The obex aborting is done in
+	 * close(), which must be called anyway. This simplifies the code a lot.
+	 */
+	if (gnome_vfs_context_check_cancellation (context)) {
+		d(g_printerr ("do_write: returning directly, cancelled\n"));
+		return GNOME_VFS_ERROR_CANCELLED;
 	}
 
 	conn = om_get_connection (handle->uri, &result);
@@ -1058,7 +1111,7 @@ do_write (GnomeVFSMethod       *method,
 
 		return om_utils_obex_error_to_vfs_result (error);
 	}
-	
+
 	dv(g_printerr ("%d bytes written\n", b_written));
 	*bytes_written = b_written;
 
@@ -1083,6 +1136,10 @@ do_open_directory (GnomeVFSMethod           *method,
         GnomeVFSResult   result;
 	GList           *elements = NULL;
 	DirectoryHandle *handle;
+
+	if (gnome_vfs_context_check_cancellation (context)) {
+		return GNOME_VFS_ERROR_CANCELLED;
+	}
 
 	if (om_uri_is_virtual_obex_root (uri)) {
 		/* We can't support following symlinks in open_directory since
@@ -1249,6 +1306,10 @@ do_get_file_info (GnomeVFSMethod          *method,
 		  GnomeVFSFileInfoOptions  options,
 		  GnomeVFSContext         *context)
 {
+	if (gnome_vfs_context_check_cancellation (context)) {
+		return GNOME_VFS_ERROR_CANCELLED;
+	}
+
 	/* Special-case the obex:/// root, which is a virtual root containin
 	 * symlinks to the paired devices.
 	 */
@@ -1358,7 +1419,7 @@ do_get_file_info_from_handle (GnomeVFSMethod          *method,
 	FileHandle *handle;
 	
 	handle = (FileHandle *) method_handle;
-	
+
 	return do_get_file_info (method, handle->uri, file_info, 
 				 options, context);
 }

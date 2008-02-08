@@ -28,7 +28,7 @@
 
 #include "om-utils.h"
 
-#define d(x) 
+#define d(x) x
 
 
 /* Note: Uses URIs on the form:
@@ -285,30 +285,39 @@ om_utils_obex_error_to_vfs_result (gint error)
 		/* We get this when trying to move a file on Nokia 6230 and
 		 * HP iPaq, does it mean that it's not a supported action?
 		 */
+		d(g_printerr ("Error: RSP_BAD_REQUEST\n"));
 		return GNOME_VFS_ERROR_NOT_SUPPORTED;
 
 	case OBEX_RSP_FORBIDDEN: /* 0x43 */
+		d(g_printerr ("Error: RSP_FORBIDDEN\n"));
 		return GNOME_VFS_ERROR_NOT_PERMITTED;
 
 	case OBEX_RSP_NOT_FOUND: /* 0x44 */
+		d(g_printerr ("Error: RSP_NOT_FOUND\n"));
 		return GNOME_VFS_ERROR_NOT_FOUND;
 
 	case OBEX_RSP_REQUEST_TIME_OUT: /* 0x48 */
+		d(g_printerr ("Error: RSP_REQUEST_TIME_OUT\n"));
 		return GNOME_VFS_ERROR_IO;
 
 	case OBEX_RSP_NOT_ACCEPTABLE: /* 0x46 */
+		d(g_printerr ("Error: RSP_NOT_ACCEPTABLE\n"));
 		return GNOME_VFS_ERROR_NOT_PERMITTED;
 		
 	case OBEX_RSP_REQ_ENTITY_TOO_LARGE: /* 0x4d */
+		d(g_printerr ("Error: RSP_REQ_ENTITY_TOO_LARGE\n"));
 		return GNOME_VFS_ERROR_TOO_BIG;
 		
 	case OBEX_RSP_NOT_IMPLEMENTED:	/* 0x51 */
+		d(g_printerr ("Error: RSP_NOT_IMPLEMENTED\n"));
 		return GNOME_VFS_ERROR_NOT_SUPPORTED;
 
 	case OBEX_RSP_DATABASE_FULL: /* 0x60 */
+		d(g_printerr ("Error: RSP_DATABASE_FULL\n"));
 		return GNOME_VFS_ERROR_NO_SPACE;
 		
 	case OBEX_RSP_DATABASE_LOCKED: /* 0x61 */
+		d(g_printerr ("Error: RSP_DATABASE_LOCKED\n"));
 		return GNOME_VFS_ERROR_NOT_PERMITTED;
 
 		
