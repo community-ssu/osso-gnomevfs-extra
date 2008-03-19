@@ -1,5 +1,9 @@
 2008-03-19  Richard Hult  <richard@imendio.com>
 
+	* Release 1.9.6.
+
+2008-03-19  Richard Hult  <richard@imendio.com>
+
 	* configure.in: Bump version.
 
 	* obex-module/src/obex-method.c: (do_create), (do_close),
