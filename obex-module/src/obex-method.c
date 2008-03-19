@@ -41,7 +41,7 @@
 #include <dbus/dbus.h>
 
 /* For debug output (like errors/warnings). */
-#define d(x) x
+#define d(x) 
 
 /* For really verbose debug output (like for every read/write). */
 #define dv(x) 
@@ -818,6 +818,8 @@ do_create (GnomeVFSMethod        *method,
 	GwObexXfer     *xfer;
 	gint            error;
 
+	d(g_printerr ("obex, do_create, uri: %s\n", gnome_vfs_uri_to_string(uri, 0)));
+
 	if (om_uri_is_below_virtual_obex_root (uri)) {
 		/* Files can't be created in the virtual root, it's
 		 * read-only.
@@ -900,6 +902,10 @@ do_close (GnomeVFSMethod       *method,
 	result = GNOME_VFS_OK;
 	handle = (FileHandle *) method_handle;
 
+	if (handle->mode & GNOME_VFS_OPEN_WRITE) {
+		d(g_printerr ("obex, do_close, for write, uri: %s\n", gnome_vfs_uri_to_string(handle->uri, 0)));
+	}
+	
 	conn = om_get_connection (handle->uri, &result);
 	if (conn == NULL) {
 		return result;
@@ -1440,6 +1446,8 @@ do_make_directory (GnomeVFSMethod  *method,
 	gchar          *name;
 	ObexConnection *conn;
 	gint            error;
+
+        d(g_printerr ("obex, do_make_dir, uri: %s\n", gnome_vfs_uri_to_string(uri, 0)));
 
 	if (om_uri_is_below_virtual_obex_root (uri)) {
 		return GNOME_VFS_ERROR_NOT_SUPPORTED;

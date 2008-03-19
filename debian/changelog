@@ -1,8 +1,8 @@
-osso-gnomevfs-extra (1.9.6-1~unreleased) unstable; urgency=low
+osso-gnomevfs-extra (1.9.6-1) unstable; urgency=low
 
-  * 
+  * Fixes: NB#79291, gnome-vfs-daemon core dumps are generated when trying
 
- -- Marius Vollmer <marius.vollmer@nokia.com>  Tue, 12 Feb 2008 15:11:20 +0200
+ -- Richard Hult <richard@imendio.com>  Wed, 19 Mar 2008 11:24:55 +0100
 
 osso-gnomevfs-extra (1.9.5-1) unstable; urgency=low
 

@@ -28,7 +28,7 @@
 
 #include "om-utils.h"
 
-#define d(x) x
+#define d(x) 
 
 
 /* Note: Uses URIs on the form:
@@ -153,6 +153,10 @@ om_utils_get_path_list_from_uri (const gchar       *cur_dir,
 	} else {
 		new_path = om_utils_get_path_from_uri (uri);
 	}
+
+        if (new_path == NULL) {
+                new_path = g_strdup ("");
+        }
 
 	if (cur_dir && strcmp (new_path, cur_dir) == 0) {
 		/* Same path */
@@ -287,6 +291,10 @@ om_utils_obex_error_to_vfs_result (gint error)
 		 */
 		d(g_printerr ("Error: RSP_BAD_REQUEST\n"));
 		return GNOME_VFS_ERROR_NOT_SUPPORTED;
+
+	case OBEX_RSP_UNAUTHORIZED: /* 0x41 */
+		d(g_printerr ("Error: RSP_UNAUTHORIZED\n"));
+		return GNOME_VFS_ERROR_NOT_PERMITTED;
 
 	case OBEX_RSP_FORBIDDEN: /* 0x43 */
 		d(g_printerr ("Error: RSP_FORBIDDEN\n"));
