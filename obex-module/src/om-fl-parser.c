@@ -110,6 +110,7 @@ fl_parser_start_node_cb (void        *user_data,
 			     G_MARKUP_ERROR_UNKNOWN_ELEMENT,  
 			     "Unknown element '%s'",  
 			     node_name);
+		gnome_vfs_file_info_unref (info);
 		return;
 	}
 
@@ -273,9 +274,12 @@ fl_parser_fill_file_info (GnomeVFSFileInfo  *info, const char **attr)
 			d(g_print ("Group: '%s'\n", value));
 		}
 		else if (strcmp (name, "type") == 0) {
-			info->valid_fields |= GNOME_VFS_FILE_INFO_FIELDS_MIME_TYPE;
-			info->mime_type = g_strdup (value);
-			d(g_print ("Mime-Type: '%s'\n", info->mime_type));
+			if (value[0] != '\0') {
+				info->mime_type = g_strdup (value);
+				d(g_print ("Mime-Type: '%s'\n", info->mime_type));
+			} else {
+				d(g_print ("Mime-Type: (empty)\n"));
+			}
 		}
 		else if (strcmp (name, "xml:lang") == 0) {
 			d(g_print ("Lang: '%s'\n", value));

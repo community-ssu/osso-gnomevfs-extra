@@ -1,3 +1,9 @@
+2008-09-24  Richard Hult  <richard@imendio.com>
+
+	* obex-module/src/om-fl-parser.c (fl_parser_fill_file_info): In
+	case we get an empty string as MIME type from the device, don't
+	use it.
+
 2008-03-19  Richard Hult  <richard@imendio.com>
 
 	* Release 1.9.6.

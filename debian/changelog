@@ -1,3 +1,9 @@
+osso-gnomevfs-extra (1.9.6-2) unstable; urgency=low
+
+  * Fixes: NB#88054, File Manager crashes when user tries to browse through
+
+ -- Richard Hult <richard@imendio.com>  Wed, 24 Sep 2008 08:56:04 +0200
+
 osso-gnomevfs-extra (1.9.6-1) unstable; urgency=low
 
   * Fixes: NB#79291, gnome-vfs-daemon core dumps are generated when trying
