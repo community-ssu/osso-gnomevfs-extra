@@ -1,3 +1,10 @@
+osso-gnomevfs-extra (1.9.6-3) unstable; urgency=low
+
+  * No change in this version, just bump the version to get rebuilt
+  * Fixes: NB#94728, several gnome-vfs packages shall be recompiled to
+
+ -- Richard Hult <richard@imendio.com>  Tue,  9 Dec 2008 13:20:00 +0100
+
 osso-gnomevfs-extra (1.9.6-2) unstable; urgency=low
 
   * Fixes: NB#88054, File Manager crashes when user tries to browse through
