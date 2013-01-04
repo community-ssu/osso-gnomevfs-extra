@@ -43,15 +43,37 @@ typedef struct {
 	GMainLoop      *loop;
 } Connection;
 
+typedef struct {
+	gchar *address;
+	gchar *name;
+	gchar *icon;
+	gboolean paired;
+	gboolean blocked;
+	gboolean connected;
+	gboolean support_ftp;
+} DeviceProperties;
+
 /* We will try to disconnect busy devices, but only before they are used, in
  * case they were used while the daemon was killed.
  */
 G_LOCK_DEFINE (used_devs);
 static GHashTable *used_devs = NULL;
 
-static gboolean is_obex_device (Connection *conn, 
-				const char *dev,
-				const char *name);
+static gboolean get_device_properties (Connection *conn, const char *dev,
+				DeviceProperties *devprops,
+				gchar *uuid_filter);
+
+static void free_device_properties (DeviceProperties *devprops)
+{
+	if (devprops == NULL)
+		return;
+
+	g_free(devprops->address);
+	g_free(devprops->name);
+	g_free(devprops->icon);
+
+	g_free(devprops);
+}
 
 static Connection *
 get_gwcond_connection (void)
@@ -436,6 +458,7 @@ om_append_paired_devices (Connection   *conn,
 {
         DBusMessageIter diter;
 	DBusMessageIter dsub;
+	DeviceProperties *devprops;
 
         if (!dbus_message_iter_init (msg, &diter)) {
 		return;
@@ -454,10 +477,17 @@ om_append_paired_devices (Connection   *conn,
 		
 		dbus_message_iter_get_basic (&dsub, &remote_devname);
 		
-		if (!is_obex_device (conn, devname, (const char*) remote_devname)) {
+		devprops = g_new0 (DeviceProperties, 1);
+		if (devprops == NULL)
+			g_error ("Out of memory");
+
+		if (!get_device_properties (conn, (const char*) remote_devname,
+				       	devprops, "00001106-*")) {
 			continue;
 		}
-		
+		if (! devprops->paired || devprops->blocked) {
+			continue;
+		}
 		
 		info = gnome_vfs_file_info_new ();
 		
@@ -473,7 +503,10 @@ om_append_paired_devices (Connection   *conn,
 			GNOME_VFS_FILE_INFO_FIELDS_MIME_TYPE |
 			GNOME_VFS_FILE_INFO_FIELDS_SYMLINK_NAME;
 		
-		info->name = g_strdup_printf ("[%s]", remote_devname);
+		if (devprops->name != NULL)
+			info->name = g_strdup(devprops->name);
+		else
+			info->name = g_strdup_printf ("[%s]", devprops->address);
 		info->type = GNOME_VFS_FILE_TYPE_SYMBOLIC_LINK;
 		info->permissions = 
 			GNOME_VFS_PERM_USER_READ |
@@ -484,7 +517,9 @@ om_append_paired_devices (Connection   *conn,
 		info->gid = 0;
 		info->mime_type = g_strdup ("x-directory/normal");
 
-		info->symlink_name = g_strdup_printf ("obex://[%s]", remote_devname);
+		info->symlink_name = g_strdup_printf ("obex://[%s]", devprops->address);
+
+		free_device_properties(devprops);
 
 		/*g_print ("added name: %s, symlink name: %s\n", info->name, info->symlink_name);*/
 		
@@ -637,19 +672,34 @@ om_dbus_get_dev_list (void)
 }
 
 static gboolean
-is_obex_device (Connection *conn,
-		const char *dev, 
-		const char *name)
+get_device_properties (Connection *conn, const char *dev,
+		DeviceProperties *devprops, char *uuid_filter)
 {
+#if 0
 	DBusMessage      *msg, *ret;
 	DBusMessageIter  iter, sub;
 	DBusError        error;
-	gboolean         is_obex = FALSE;
-	char            *class_name;
+#endif
 
 	/* Luf - quick fix as it will not be so easy */
+	int l = strlen (dev);
+	char *addr;
+	if (l > 0) {
+		char *c;
+		c = addr = g_strdup (dev + (l - 17));
+		while (c && *c) {
+			if (*c == '_')
+				*c = ':';
+			c++;
+		}
+	} else {
+		addr = g_strdup ("00:00:00:00:00:00");
+	}
+	devprops->address = addr;
+	devprops->paired = TRUE;
 	return TRUE;
 
+#if 0
 	msg = dbus_message_new_method_call ("org.bluez",
 					    dev,
 					    "org.bluez.Device",
@@ -730,5 +780,6 @@ is_obex_device (Connection *conn,
 	dbus_message_unref (ret);
 
 	return is_obex;
+#endif
 }
 
