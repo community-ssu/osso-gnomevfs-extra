@@ -448,7 +448,7 @@ om_append_paired_devices (Connection   *conn,
 		GnomeVFSFileInfo *info;
 		char             *remote_devname;
 		
-		if (dbus_message_iter_get_arg_type (&dsub) != DBUS_TYPE_STRING) {
+		if (dbus_message_iter_get_arg_type (&dsub) != DBUS_TYPE_OBJECT_PATH) {
 			continue;
 		}
 		
@@ -557,7 +557,7 @@ om_dbus_get_dev_list (void)
 		return NULL;
 	}
 
-	msg = dbus_message_new_method_call ("org.bluez", "/org/bluez",
+	msg = dbus_message_new_method_call ("org.bluez", "/",
                                             "org.bluez.Manager",
                                             "ListAdapters");
 
@@ -596,7 +596,7 @@ om_dbus_get_dev_list (void)
 			msg = dbus_message_new_method_call ("org.bluez",
 							    devname, 
 							    "org.bluez.Adapter", 
-							    "ListBondings");
+							    "ListDevices");
 
 			if (!msg) {
 				dbus_message_unref (ret1);
@@ -647,14 +647,57 @@ is_obex_device (Connection *conn,
 	gboolean         is_obex = FALSE;
 	char            *class_name;
 
+	/* Luf - quick fix as it will not be so easy */
+	return TRUE;
+
 	msg = dbus_message_new_method_call ("org.bluez",
 					    dev,
-					    "org.bluez.Adapter",
-					    "GetRemoteServiceClasses");
+					    "org.bluez.Device",
+					    "GetProperties");
 
 	dbus_message_iter_init_append (msg, &iter);
 
 	dbus_message_iter_append_basic (&iter, DBUS_TYPE_STRING, &name);
+
+	/* TODO: Luf - continue
+	 * Structure of reply (just useful things)
+	 *  array [
+	 *    dict entry(
+	 *       string "Address"
+	 *       variant             string "00:00:00:00:00:00"
+	 *    )
+	 *    dict entry(
+	 *       string "Name"
+	 *       variant             string "Nokia N900"
+	 *    )
+	 *    dict entry(
+	 *       string "Alias"
+	 *       variant             string "Nokia N900"
+	 *    )
+	 *    dict entry(
+	 *       string "Icon"
+	 *       variant             string "phone"
+	 *    )
+	 *    dict entry(
+	 *       string "Paired"
+	 *       variant             boolean true
+	 *    )
+	 *    dict entry(
+	 *       string "Blocked"
+	 *       variant             boolean false
+	 *    )
+	 *    dict entry(
+	 *       string "Connected"
+	 *       variant             boolean false
+	 *    )
+	 *    dict entry(
+	 *       string "UUIDs"
+	 *       variant             array [
+	 *             string "00001106-0000-1000-8000-00805f9b34fb"
+	 *           ]
+	 *    )
+	 *  ]
+	 */
 
 	dbus_error_init (&error);
 	ret = dbus_connection_send_with_reply_and_block (conn->dbus_conn,
@@ -678,7 +721,8 @@ is_obex_device (Connection *conn,
 
 			dbus_message_iter_get_basic (&sub, &class_name);
 
-			if (!strcmp (class_name, "object transfer")) {
+			/* obexFTP UUID - TODO: check just 00001106- */
+			if (!strcmp (class_name, "00001106-0000-1000-8000-00805f9b34fb")) {
 				is_obex = TRUE;
 				break;
 			}
