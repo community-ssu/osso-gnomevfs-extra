@@ -655,10 +655,6 @@ is_obex_device (Connection *conn,
 					    "org.bluez.Device",
 					    "GetProperties");
 
-	dbus_message_iter_init_append (msg, &iter);
-
-	dbus_message_iter_append_basic (&iter, DBUS_TYPE_STRING, &name);
-
 	/* TODO: Luf - continue
 	 * Structure of reply (just useful things)
 	 *  array [
