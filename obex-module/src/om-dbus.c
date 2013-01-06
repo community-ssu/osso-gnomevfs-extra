@@ -45,11 +45,8 @@ typedef struct {
 
 typedef struct {
 	gchar *address;
-	gchar *name;
-	gchar *icon;
 	gboolean paired;
 	gboolean blocked;
-	gboolean connected;
 	gboolean support_ftp;
 } DeviceProperties;
 
@@ -61,18 +58,17 @@ static GHashTable *used_devs = NULL;
 
 static gboolean get_device_properties (Connection *conn, const char *dev,
 				DeviceProperties *devprops,
-				gchar *uuid_filter);
+				gchar *uuid_filter,
+				gboolean uuid_filter_prefix);
 
 static void free_device_properties (DeviceProperties *devprops)
 {
 	if (devprops == NULL)
 		return;
 
-	g_free(devprops->address);
-	g_free(devprops->name);
-	g_free(devprops->icon);
+	g_free (devprops->address);
 
-	g_free(devprops);
+	g_free (devprops);
 }
 
 static Connection *
@@ -252,6 +248,77 @@ check_bda (const gchar *bda)
 		}
 	}
 	
+	return TRUE;
+}
+
+static gboolean
+get_dict_property (DBusMessageIter *sub,
+		   DeviceProperties *devprops,
+		   char *uuid_filter,
+		   gboolean uuid_filter_prefix)
+{
+	DBusMessageIter dict_entry, dict_value;
+	gchar *dict_key, *dict_str = NULL;
+
+	if (dbus_message_iter_get_arg_type (sub) != DBUS_TYPE_DICT_ENTRY) {
+		return FALSE;
+	}
+
+	dbus_message_iter_recurse (sub, &dict_entry);
+
+	/* Try to get the Key */
+	dbus_message_iter_get_basic (&dict_entry, &dict_key);
+	if (dict_key == NULL) {
+		return FALSE;
+	}
+
+	/* Go to the value */
+	if (!dbus_message_iter_next(&dict_entry)) {
+		return FALSE;
+	}
+
+	/* Try to get the value */
+	if (dbus_message_iter_get_arg_type (&dict_entry) != DBUS_TYPE_VARIANT) {
+		return FALSE;
+	}
+
+	/* Go to the Variant */
+	dbus_message_iter_recurse(&dict_entry, &dict_value);
+
+	if (!g_strcmp0 (dict_key, "Address")) {
+		dbus_message_iter_get_basic (&dict_value, &dict_str);
+		devprops->address = g_strdup (dict_str);
+	} else if (!g_strcmp0 (dict_key, "Paired")) {
+		dbus_message_iter_get_basic (&dict_value, &devprops->paired);
+	} else if (!g_strcmp0 (dict_key, "Blocked")) {
+		dbus_message_iter_get_basic (&dict_value, &devprops->blocked);
+	} else if (!g_strcmp0 (dict_key, "UUIDs")) {
+		DBusMessageIter uuid_entry;
+
+		if (uuid_filter == NULL || *uuid_filter == '\0') {
+			devprops->support_ftp = TRUE;
+			goto next;
+		}
+
+		/* Go to the array of UUIDs */
+		dbus_message_iter_recurse(&dict_value, &uuid_entry);
+
+		do {
+			dbus_message_iter_get_basic (&uuid_entry, &dict_str);
+			if ((! uuid_filter_prefix &&
+					! g_strcmp0(uuid_filter, dict_str)) ||
+			    (uuid_filter_prefix &&
+					g_str_has_prefix(dict_str, uuid_filter))) {
+				devprops->support_ftp = TRUE;
+				goto next;
+
+			}
+		} while (dbus_message_iter_next(&uuid_entry));
+
+		devprops->support_ftp = FALSE;
+	}
+
+next:
 	return TRUE;
 }
 
@@ -481,17 +548,23 @@ om_append_paired_devices (Connection   *conn,
 		if (devprops == NULL)
 			g_error ("Out of memory");
 
+		/* Question: do we need whole UUID?
+		 * "00001106-0000-1000-8000-00805f9b34fb" */
 		if (!get_device_properties (conn, (const char*) remote_devname,
-				       	devprops, "00001106-*")) {
+				       	devprops, "00001106-", TRUE)) {
+			free_device_properties(devprops);
 			continue;
 		}
-		if (! devprops->paired || devprops->blocked) {
+		if (! devprops->paired || devprops->blocked ||
+				! devprops->support_ftp) {
+			free_device_properties(devprops);
 			continue;
 		}
 		
 		info = gnome_vfs_file_info_new ();
 		
 		if (!info) {
+			free_device_properties(devprops);
 			return;
 		}
 		
@@ -503,10 +576,7 @@ om_append_paired_devices (Connection   *conn,
 			GNOME_VFS_FILE_INFO_FIELDS_MIME_TYPE |
 			GNOME_VFS_FILE_INFO_FIELDS_SYMLINK_NAME;
 		
-		if (devprops->name != NULL)
-			info->name = g_strdup(devprops->name);
-		else
-			info->name = g_strdup_printf ("[%s]", devprops->address);
+		info->name = g_strdup_printf ("[%s]", devprops->address);
 		info->type = GNOME_VFS_FILE_TYPE_SYMBOLIC_LINK;
 		info->permissions = 
 			GNOME_VFS_PERM_USER_READ |
@@ -673,77 +743,17 @@ om_dbus_get_dev_list (void)
 
 static gboolean
 get_device_properties (Connection *conn, const char *dev,
-		DeviceProperties *devprops, char *uuid_filter)
+		DeviceProperties *devprops, char *uuid_filter,
+		gboolean uuid_filter_prefix)
 {
-#if 0
 	DBusMessage      *msg, *ret;
 	DBusMessageIter  iter, sub;
 	DBusError        error;
-#endif
 
-	/* Luf - quick fix as it will not be so easy */
-	int l = strlen (dev);
-	char *addr;
-	if (l > 0) {
-		char *c;
-		c = addr = g_strdup (dev + (l - 17));
-		while (c && *c) {
-			if (*c == '_')
-				*c = ':';
-			c++;
-		}
-	} else {
-		addr = g_strdup ("00:00:00:00:00:00");
-	}
-	devprops->address = addr;
-	devprops->paired = TRUE;
-	return TRUE;
-
-#if 0
 	msg = dbus_message_new_method_call ("org.bluez",
 					    dev,
 					    "org.bluez.Device",
 					    "GetProperties");
-
-	/* TODO: Luf - continue
-	 * Structure of reply (just useful things)
-	 *  array [
-	 *    dict entry(
-	 *       string "Address"
-	 *       variant             string "00:00:00:00:00:00"
-	 *    )
-	 *    dict entry(
-	 *       string "Name"
-	 *       variant             string "Nokia N900"
-	 *    )
-	 *    dict entry(
-	 *       string "Alias"
-	 *       variant             string "Nokia N900"
-	 *    )
-	 *    dict entry(
-	 *       string "Icon"
-	 *       variant             string "phone"
-	 *    )
-	 *    dict entry(
-	 *       string "Paired"
-	 *       variant             boolean true
-	 *    )
-	 *    dict entry(
-	 *       string "Blocked"
-	 *       variant             boolean false
-	 *    )
-	 *    dict entry(
-	 *       string "Connected"
-	 *       variant             boolean false
-	 *    )
-	 *    dict entry(
-	 *       string "UUIDs"
-	 *       variant             array [
-	 *             string "00001106-0000-1000-8000-00805f9b34fb"
-	 *           ]
-	 *    )
-	 *  ]
-	 */
 
 	dbus_error_init (&error);
 	ret = dbus_connection_send_with_reply_and_block (conn->dbus_conn,
@@ -758,28 +768,17 @@ get_device_properties (Connection *conn, const char *dev,
 	}
 
 	if (dbus_message_iter_init (ret, &iter)) {
+
 		dbus_message_iter_recurse (&iter, &sub);
 
-		do {
-			if (dbus_message_iter_get_arg_type (&sub) != DBUS_TYPE_STRING) {
-				continue;
-			}
-
-			dbus_message_iter_get_basic (&sub, &class_name);
-
-			/* obexFTP UUID - TODO: check just 00001106- */
-			if (!strcmp (class_name, "00001106-0000-1000-8000-00805f9b34fb")) {
-				is_obex = TRUE;
-				break;
-			}
-
-
-		} while (dbus_message_iter_next (&sub));
+		while (get_dict_property (&sub, devprops, uuid_filter,
+				uuid_filter_prefix) &&
+				dbus_message_iter_next (&sub)) {
+		}
 	}
 
 	dbus_message_unref (ret);
 
-	return is_obex;
-#endif
+	return devprops->address != NULL;
 }
 
