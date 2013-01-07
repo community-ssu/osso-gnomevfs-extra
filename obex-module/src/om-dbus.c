@@ -37,6 +37,10 @@
  * and uses that for the dbus connection.
  */
 
+/* Lock for all manipulations of the devices hash table */
+static GMutex     *devices_hash_mutex;
+static GHashTable *devices_hash;
+
 typedef struct {
 	DBusConnection *dbus_conn;
 	GMainContext   *context;
@@ -105,16 +109,23 @@ get_gwcond_connection (void)
 	return conn;
 }
 
-static void
-connection_free (Connection *conn)
+void
+om_dbus_connection_free (void *dev_conn)
 {
-	dbus_connection_close (conn->dbus_conn);
-	dbus_connection_unref (conn->dbus_conn);
+	Connection **conn = (Connection **)dev_conn;
+
+	if (conn == NULL || *conn == NULL) {
+		return;
+	}
+
+	dbus_connection_close ((*conn)->dbus_conn);
+	dbus_connection_unref ((*conn)->dbus_conn);
 	
-	g_main_loop_unref (conn->loop);
-	g_main_context_unref (conn->context);
+	g_main_loop_unref ((*conn)->loop);
+	g_main_context_unref ((*conn)->context);
 	
-	g_free (conn);
+	g_free (*conn);
+	*conn = NULL;
 }
 
 /* This assumes that the connection is setup and that the bda has been checked
@@ -122,6 +133,7 @@ connection_free (Connection *conn)
  */
 static void
 send_cancel_connect (Connection  *conn,
+		     const gchar *obj_path,
 		     const gchar *bda,
 		     const gchar *profile)
 {
@@ -129,16 +141,15 @@ send_cancel_connect (Connection  *conn,
 
 	d(g_printerr ("obex: Send cancel connect.\n"));
 	
-	message = dbus_message_new_method_call (BTCOND_SERVICE,
-						BTCOND_REQ_PATH,
-						BTCOND_REQ_INTERFACE,
-						BTCOND_RFCOMM_CANCEL_CONNECT_REQ);
+	message = dbus_message_new_method_call ("org.bluez",
+						obj_path,
+						"org.bluez.Serial",
+						"Disconnect");
 	if (!message) {
 		g_error ("Out of memory");
 	}
 
 	if (!dbus_message_append_args (message,
-				       DBUS_TYPE_STRING, &bda,
 				       DBUS_TYPE_STRING, &profile,
 				       DBUS_TYPE_INVALID)) {
 		g_error ("Out of memory");
@@ -149,17 +160,20 @@ send_cancel_connect (Connection  *conn,
 }
 
 static void
-send_disconnect (Connection *conn, const gchar *str, const gchar *profile)
+send_disconnect (Connection *conn,
+		 const gchar *obj_path,
+		 const gchar *bda,
+		 const gchar *str)
 {
 	DBusMessage *message;
 	DBusMessage *reply;
 
 	d(g_printerr ("obex: Send disconnect.\n"));
 	
-	message = dbus_message_new_method_call (BTCOND_SERVICE,
-						BTCOND_REQ_PATH,
-						BTCOND_REQ_INTERFACE,
-						BTCOND_RFCOMM_DISCONNECT_REQ);
+	message = dbus_message_new_method_call ("org.bluez",
+						obj_path,
+						"org.bluez.Serial",
+						"Disconnect");
 	if (!message) {
 		g_error ("Out of memory");
 	}
@@ -170,17 +184,6 @@ send_disconnect (Connection *conn, const gchar *str, const gchar *profile)
 		g_error ("Out of memory");
 	}
 
-	/* The method support two signatures, one string (dev), or two strings
-	 * (bda and profile).
-	 */
-	if (profile) {
-		if (!dbus_message_append_args (message,
-					       DBUS_TYPE_STRING, &profile,
-					       DBUS_TYPE_INVALID)) {
-			g_error ("Out of memory");
-		}
-	}
-	
 	reply = dbus_connection_send_with_reply_and_block (conn->dbus_conn,
 							   message, -1, NULL);
 	
@@ -192,7 +195,10 @@ send_disconnect (Connection *conn, const gchar *str, const gchar *profile)
 }
 
 static gboolean 
-send_disconnect_if_first (Connection *conn, const gchar *str, const gchar *profile)
+send_disconnect_if_first (Connection *conn,
+			  const gchar *obj_path,
+			  const gchar *bda,
+			  const gchar *str)
 {
 	gchar *lower;
 	
@@ -202,7 +208,7 @@ send_disconnect_if_first (Connection *conn, const gchar *str, const gchar *profi
 		used_devs = g_hash_table_new (g_str_hash, g_str_equal);
 	}
 
-	lower = g_ascii_strdown (str, -1);
+	lower = g_ascii_strdown (bda, -1);
 	if (g_hash_table_lookup (used_devs, lower)) {
 		g_free (lower);
 		d(g_printerr ("obex: %s has already been used, don't disconnect.\n", str));
@@ -217,7 +223,7 @@ send_disconnect_if_first (Connection *conn, const gchar *str, const gchar *profi
 
 	G_UNLOCK (used_devs);
 
-	send_disconnect (conn, str, profile);
+	send_disconnect (conn, obj_path, bda, str);
 
 	return TRUE;
 }
@@ -249,6 +255,35 @@ check_bda (const gchar *bda)
 	}
 	
 	return TRUE;
+}
+
+static gchar *
+object_path_from_bda (const gchar *bda)
+{
+	gchar *obj_path;
+	gchar *lower = g_ascii_strdown (bda, -1);
+	guint  count;
+
+	g_mutex_lock (devices_hash_mutex);
+	count = g_hash_table_size(devices_hash);
+	obj_path = g_strdup (g_hash_table_lookup (devices_hash, lower));
+	g_mutex_unlock (devices_hash_mutex);
+	g_free (lower);
+
+	if (! obj_path) {
+		if (count == 0) {
+			/* TODO: find the device via DBUS or re-read the hash
+ 			 * (e.g. recover from gnome-vfs-daemon crash)
+ 			 */
+
+			if (obj_path) {
+				goto success;
+			}
+		}
+	}
+
+success:
+	return obj_path;
 }
 
 static gboolean
@@ -329,6 +364,7 @@ next:
  */
 static gchar *
 get_dev (Connection     *conn,
+	 const gchar    *obj_path,
 	 const gchar    *bda,
 	 const gchar    *profile,
 	 GnomeVFSResult *result,
@@ -341,30 +377,21 @@ get_dev (Connection     *conn,
 	gboolean     ret;
 	gchar       *str;
 	gchar       *dev;
-	gboolean     b;
 
 	*result = GNOME_VFS_OK;
 	*invalid_profile = FALSE;
 	*already_connected = FALSE;
 	
-	if (!check_bda (bda)) {
-		*result = GNOME_VFS_ERROR_INVALID_URI;
-		return NULL;
-	}
-
-	message = dbus_message_new_method_call (BTCOND_SERVICE,
-						BTCOND_REQ_PATH,
-						BTCOND_REQ_INTERFACE,
-						BTCOND_RFCOMM_CONNECT_REQ);
+	message = dbus_message_new_method_call ("org.bluez",
+						obj_path,
+						"org.bluez.Serial",
+						"Connect");
 	if (!message) {
 		g_error ("Out of memory");
 	}
 
-	b = FALSE;
 	if (!dbus_message_append_args (message,
-				       DBUS_TYPE_STRING, &bda,
 				       DBUS_TYPE_STRING, &profile,
-				       DBUS_TYPE_BOOLEAN, &b,
 				       DBUS_TYPE_INVALID)) {
 		g_error ("Out of memory");
 	}
@@ -378,54 +405,48 @@ get_dev (Connection     *conn,
 	
 	dbus_message_unref (message);
 
-	/* The errors according to the documentation of osso-gwconnect 0.67 can be:
-
-	"com.nokia.btcond.error.invalid_dev" 	No such device selected
-	"com.nokia.btcond.error.invalid_svc"	No such SDP profile on device
-	"com.nokia.btcond.error.no_dev_info"	No info about device
-	"com.nokia.btcond.error.connect_failed"	Connection to device failed
-	"com.nokia.btcond.error.connected"	Already connected to specified service
-	*/
+	/* The errors according to the bluez 4.X:
+	 *
+	 * org.bluez.Error.ConnectionAttemptFailed
+	 * org.bluez.Error.DoesNotExist
+	 * org.bluez.Error.Failed
+	 * org.bluez.Error.InProgress
+	 * org.bluez.Error.InvalidArguments
+	 * org.bluez.Error.NotSupported
+	 * org.bluez.Error.UnknownMethod
+	 */
 
 	if (dbus_error_is_set (&dbus_error)) {
-		if (strcmp (dbus_error.name, BTCOND_ERROR_INVALID_SVC) == 0) {
+		if (g_strcmp0 (dbus_error.name, "org.bluez.Error.DoesNotExist") == 0 ||
+		    g_strcmp0 (dbus_error.name, "org.bluez.Error.InvalidArguments") == 0) {
 			d(g_printerr ("obex: Invalid SDP profile.\n"));
 			*result = GNOME_VFS_ERROR_SERVICE_NOT_AVAILABLE;
 			*invalid_profile = TRUE;
 		}
-		else if (strcmp (dbus_error.name, BTCOND_ERROR_INVALID_DEV) == 0) {
+		else if (g_strcmp0 (dbus_error.name, "org.bluez.Error.UnknownMethod") == 0) {
 			d(g_printerr ("obex: Invalid BDA.\n"));
 			*result = GNOME_VFS_ERROR_SERVICE_NOT_AVAILABLE;
 		}
-		else if (strcmp (dbus_error.name, BTCOND_ERROR_NO_DEV_INFO) == 0) {
-			d(g_printerr ("obex: No dev info.\n"));
-			*result = GNOME_VFS_ERROR_SERVICE_NOT_AVAILABLE;
-		}
-		else if (strcmp (dbus_error.name, BTCOND_ERROR_CONNECT_FAILED) == 0) {
+		else if (g_strcmp0 (dbus_error.name, "org.bluez.Error.ConnectionAttemptFailed") == 0 ||
+			 g_strcmp0 (dbus_error.name, "org.bluez.Error.Failed") == 0) {
 			d(g_printerr ("obex: GW connect failed.\n"));
 			*result = GNOME_VFS_ERROR_SERVICE_NOT_AVAILABLE;
+			// TODO: needs to be investigated when to set
+			//*already_connected = TRUE;
 		}
-		else if (strcmp (dbus_error.name, BTCOND_ERROR_CONNECTED) == 0) {
-			d(g_printerr ("obex: GW already connected.\n"));
-			*result = GNOME_VFS_ERROR_SERVICE_NOT_AVAILABLE;
-			*already_connected = TRUE;
-		}
-		else if (strcmp (dbus_error.name, BTCOND_ERROR_CANCELLED) == 0) {
-			d(g_printerr ("obex: GW cancelled.\n"));
-			*result = GNOME_VFS_ERROR_INTERRUPTED;
-		}
-		else if (strcmp (dbus_error.name, DBUS_ERROR_NAME_HAS_NO_OWNER) == 0 ||
-			 strcmp (dbus_error.name, DBUS_ERROR_SERVICE_UNKNOWN) == 0) {
-			d(g_printerr ("obex: btcond is not running.\n"));
+		else if (g_strcmp0 (dbus_error.name, DBUS_ERROR_NAME_HAS_NO_OWNER) == 0 ||
+			 g_strcmp0 (dbus_error.name, DBUS_ERROR_SERVICE_UNKNOWN) == 0) {
+			d(g_printerr ("obex: bluetoothd is not running.\n"));
 			*result = GNOME_VFS_ERROR_SERVICE_NOT_AVAILABLE;
 		}
-		else if (strcmp (dbus_error.name, DBUS_ERROR_NO_REPLY) == 0) {
+		else if (g_strcmp0 (dbus_error.name, DBUS_ERROR_NO_REPLY) == 0 ||
+			 g_strcmp0 (dbus_error.name, "org.bluez.Error.InProgress")) {
 			d(g_printerr ("obex: No reply.\n"));
-			/* We get this when btcond times out. Cancel the
+			/* We get this when bluetoothd times out. Cancel the
 			 * connection so that btcond knows that this end will
 			 * not be interested in the connection if we time out.
 			 */
-			send_cancel_connect (conn, bda, profile);
+			send_cancel_connect (conn, obj_path, bda, profile);
 			
 			*result = GNOME_VFS_ERROR_SERVICE_NOT_AVAILABLE;
 		} else {
@@ -459,14 +480,46 @@ get_dev (Connection     *conn,
 	return dev;
 }
 
-gchar *
-om_dbus_get_dev (const gchar *bda, GnomeVFSResult *result)
+void
+om_dbus_init (void)
 {
+	devices_hash_mutex = g_mutex_new ();
+	devices_hash = g_hash_table_new_full (g_str_hash, g_str_equal,
+						g_free, g_free);
+}
+
+void
+om_dbus_shutdown (void)
+{
+	g_mutex_lock (devices_hash_mutex);
+	g_hash_table_remove_all (devices_hash);
+	g_hash_table_destroy (devices_hash);
+	devices_hash = NULL;
+	g_mutex_unlock (devices_hash_mutex);
+	g_mutex_free (devices_hash_mutex);
+}
+
+gchar *
+om_dbus_get_dev (void *dev_conn,
+		 const gchar *bda,
+		 GnomeVFSResult *result)
+{
+	Connection  **device_conn = (Connection  **)dev_conn;
 	Connection  *conn;
 	const gchar *profile;
-	gchar       *dev;
+	gchar       *dev = NULL;
+	gchar       *obj_path;
 	gboolean     invalid_profile;
 	gboolean     already_connected;
+
+	if (bda && !strncmp (bda, "/dev/rfcomm", 11)) {
+		return g_strdup (bda);
+	}
+
+	if (!device_conn) {
+		*result = GNOME_VFS_ERROR_SERVICE_NOT_AVAILABLE;
+		return NULL;
+	}
 
 	conn = get_gwcond_connection ();
 	if (!conn) {
@@ -474,16 +527,27 @@ om_dbus_get_dev (const gchar *bda, GnomeVFSResult *result)
 		return NULL;
 	}
 	
+	if (!check_bda (bda)) {
+		*result = GNOME_VFS_ERROR_INVALID_URI;
+		goto free_dev;
+	}
+
+	obj_path = object_path_from_bda(bda);
+	if (!obj_path) {
+		*result = GNOME_VFS_ERROR_INVALID_URI;
+		goto free;
+	}
+
 	/* Try NFTP first, which appears to be some vendor specific profile. If
 	 * it's not available, fallback to FTP.
 	 */
 
 	profile = "NFTP";
-	dev = get_dev (conn, bda, profile, result,
+	dev = get_dev (conn, obj_path, bda, profile, result,
 		       &invalid_profile, &already_connected);
 	if (!dev && invalid_profile) {
 		profile = "FTP";
-		dev = get_dev (conn, bda, profile, result,
+		dev = get_dev (conn, obj_path, bda, profile, result,
 			       &invalid_profile, &already_connected);
 	}
 
@@ -491,30 +555,42 @@ om_dbus_get_dev (const gchar *bda, GnomeVFSResult *result)
 	 * are old stale connections.
 	 */
 	if (!dev && already_connected) {
-		if (send_disconnect_if_first (conn, bda, profile)) {
-			dev = get_dev (conn, bda, profile, result,
+		if (send_disconnect_if_first (conn, obj_path, bda, profile)) {
+			dev = get_dev (conn, obj_path, bda, profile, result,
 				       &invalid_profile, &already_connected);
 		}
 	}
 	
-	connection_free (conn);
+free:
+	g_free (obj_path);
+
+free_dev:
+	if (dev) {
+		*device_conn = conn;
+	} else {
+		om_dbus_connection_free (&conn);
+	}
 	
 	return dev;
 }
 
 void
-om_dbus_disconnect_dev (const gchar *dev)
+om_dbus_disconnect_dev (void *dev_conn, const gchar *bda, const gchar *dev)
 {
-	Connection *conn;
+	Connection **conn = (Connection **)dev_conn;
+	gchar *obj_path;
 
-	conn = get_gwcond_connection ();
-	if (!conn) {
+	if (!conn || !*conn || !bda || !strncmp(bda, "/dev/rfcomm", 11)) {
 		return;
 	}
 	
-	send_disconnect (conn, dev, NULL);
+	obj_path = object_path_from_bda(bda);
+	if (obj_path) {
+		send_disconnect (*conn, obj_path, bda, dev);
+		g_free (obj_path);
+	}
 
-	connection_free (conn);
+	om_dbus_connection_free (conn);
 }
 
 static void
@@ -589,17 +665,19 @@ om_append_paired_devices (Connection   *conn,
 
 		info->symlink_name = g_strdup_printf ("obex://[%s]", devprops->address);
 
-		free_device_properties(devprops);
-
 		/*g_print ("added name: %s, symlink name: %s\n", info->name, info->symlink_name);*/
 		
 		if (!info->symlink_name) {
 			/* Extra caution. */
 			gnome_vfs_file_info_unref (info);
+			free_device_properties(devprops);
 			continue;
 		}
 
 		*list = g_list_append (*list, info);
+		g_hash_table_insert (devices_hash, g_ascii_strdown(devprops->address, -1), g_strdup(remote_devname));
+
+		free_device_properties(devprops);
 	} while (dbus_message_iter_next (&dsub));
 }
 
@@ -667,7 +745,7 @@ om_dbus_get_dev_list (void)
                                             "ListAdapters");
 
 	if (!msg) {
-		connection_free (conn);
+		om_dbus_connection_free (&conn);
 
 		return NULL;
 	}
@@ -680,7 +758,7 @@ om_dbus_get_dev_list (void)
 
 	if (dbus_error_is_set (&error)) {
 		dbus_error_free (&error);
-		connection_free (conn);
+		om_dbus_connection_free (&conn);
 		return NULL;
 	}
 
@@ -688,7 +766,10 @@ om_dbus_get_dev_list (void)
                 DBusMessageIter sub;
 
 		dbus_message_iter_recurse (&iter, &sub);
-		
+
+		g_mutex_lock (devices_hash_mutex);
+		g_hash_table_remove_all (devices_hash);
+
 		/* Go through each entry (device) and get each paired device
 		 * from the entry.
 		 */
@@ -704,8 +785,9 @@ om_dbus_get_dev_list (void)
 							    "ListDevices");
 
 			if (!msg) {
+				g_mutex_unlock (devices_hash_mutex);
 				dbus_message_unref (ret1);
-				connection_free (conn);
+				om_dbus_connection_free (&conn);
 				return NULL;
                         }
 
@@ -732,11 +814,13 @@ om_dbus_get_dev_list (void)
 			dbus_message_unref (ret2);
 			
 		} while (dbus_message_iter_next (&sub));
+
+		g_mutex_unlock (devices_hash_mutex);
 	}
 
 	dbus_message_unref (ret1);
 
-	connection_free (conn);
+	om_dbus_connection_free (&conn);
 
 	return devlist;
 }

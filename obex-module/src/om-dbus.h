@@ -24,10 +24,16 @@
 #include <glib.h>
 #include <libgnomevfs/gnome-vfs.h>
 
-gchar *om_dbus_get_dev        (const gchar *bda, GnomeVFSResult *result);
-void   om_dbus_disconnect_dev (const gchar *dev);
+void   om_dbus_init            (void);
+void   om_dbus_shutdown        (void);
 
-GList *om_dbus_get_dev_list   (void);
+void   om_dbus_connection_free (void *dev_conn);
+gchar *om_dbus_get_dev         (void *dev_conn, const gchar *bda,
+                                GnomeVFSResult *result);
+void   om_dbus_disconnect_dev  (void *dev_conn, const gchar *bda,
+                                const gchar *dev);
+
+GList *om_dbus_get_dev_list    (void);
 
 
 #ifdef OBEX_PROGRESS

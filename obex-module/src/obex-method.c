@@ -57,6 +57,9 @@ static GHashTable *monitor_hash;
 static GMutex     *monitor_mutex;
 
 typedef struct {
+	/* The om_dbus connection to keep running rfcomm connection */
+	void *dev_conn;
+
 	/* The device to connect or a BDA. In case of a BDA, we ask btcond for
 	 * the device.
 	 */
@@ -244,7 +247,8 @@ om_connection_free (ObexConnection *conn)
 	
 	if (conn->connected_dev) {
 		d(g_printerr ("obex: om_connection_free calls disconnect\n"));
-		om_dbus_disconnect_dev (conn->connected_dev);
+		om_dbus_disconnect_dev (&conn->dev_conn, conn->dev,
+				conn->connected_dev);
 		g_free (conn->connected_dev);
 		conn->connected_dev = NULL;
 	}
@@ -253,6 +257,7 @@ om_connection_free (ObexConnection *conn)
 		g_main_context_unref (conn->context);
 	}
 	
+	om_dbus_connection_free (&conn->dev_conn);
 	g_free (conn->dev);
 	g_free (conn->current_dir);
 	g_free (conn->file_name);
@@ -318,7 +323,8 @@ om_connection_reset (ObexConnection *conn)
 
 	if (conn->connected_dev) {
 		d(g_printerr ("obex: om_connection_reset calls disconnect\n"));
-		om_dbus_disconnect_dev (conn->connected_dev);
+		om_dbus_disconnect_dev (&conn->dev_conn, conn->dev,
+				conn->connected_dev);
 		g_free (conn->connected_dev);
 		conn->connected_dev = NULL;
 	}
@@ -326,7 +332,8 @@ om_connection_reset (ObexConnection *conn)
 	if (strncmp (conn->dev, "/dev/rfcomm", 11) == 0) {
 		real_dev = g_strdup (conn->dev);
 	} else {
-		real_dev = om_dbus_get_dev (conn->dev, &result);
+		real_dev = om_dbus_get_dev (&conn->dev_conn, conn->dev,
+				&result);
 		if (real_dev == NULL) {
 			return result;
 		}
@@ -342,7 +349,7 @@ om_connection_reset (ObexConnection *conn)
                                   OBEX_FTP_UUID_LEN, conn->context, &error);
 	if (obex == NULL) {
 		d(g_printerr ("obex: om_connection_reset calls disconnect (error)\n"));
-		om_dbus_disconnect_dev (real_dev);
+		om_dbus_disconnect_dev (&conn->dev_conn, conn->dev, real_dev);
 		g_free (real_dev);
 		
 		return om_utils_obex_error_to_vfs_result (error);
@@ -1997,7 +2004,9 @@ vfs_module_init (const char *method_name, const char *args)
 					      om_vfs_utils_uri_case_equal,
 					      (GDestroyNotify) gnome_vfs_uri_unref,
 					      NULL);
-	
+
+	om_dbus_init();
+
 	if (!ovu_cap_server_init (get_caps_cb)) {
 		g_warning ("Couldn't init obex capabilities service.");
 	}
@@ -2031,6 +2040,8 @@ monitor_hash_foreach_free (gpointer key, gpointer value, gpointer user_data)
 void
 vfs_module_shutdown (GnomeVFSMethod* method)
 {
+	om_dbus_shutdown();
+
 	g_mutex_lock (conn_hash_mutex);
 	g_hash_table_foreach (conn_hash, conn_hash_foreach_free, NULL);
 	g_hash_table_destroy (conn_hash);

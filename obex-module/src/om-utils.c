@@ -60,7 +60,7 @@ utils_get_path_and_dev_from_uri (const GnomeVFSURI  *uri,
 			*dev = g_strdup_printf ("/dev/%s", host);
 		}
 		else if (strlen (host) == 17) {
-			*dev = g_strdup (host);
+			*dev = g_ascii_strdown (host, 17);
 		} else {
 			return FALSE;
 		}
