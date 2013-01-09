@@ -839,6 +839,10 @@ get_device_properties (Connection *conn, const char *dev,
 					    "org.bluez.Device",
 					    "GetProperties");
 
+	if (!msg) {
+		return FALSE;
+	}
+
 	dbus_error_init (&error);
 	ret = dbus_connection_send_with_reply_and_block (conn->dbus_conn,
 							 msg, 
