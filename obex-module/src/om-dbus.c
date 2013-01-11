@@ -287,6 +287,84 @@ success:
 }
 
 static gboolean
+poweron_bluetooth (Connection *conn, const gchar *obj_path)
+{
+	DBusMessage     *message;
+	DBusMessage     *reply;
+	DBusMessageIter  iter, value;
+	DBusError        dbus_error;
+	gchar           *adapter, *ada_path;
+	gchar           *prop_name = "Powered";
+	gboolean         prop_value = TRUE;
+
+	ada_path = adapter = g_strdup(obj_path);
+
+	if (!adapter || strncmp (adapter, "/org/bluez/", 11))
+		return FALSE;
+
+	adapter += 11;
+
+	while (*adapter && isdigit (*adapter))
+		++adapter;
+
+	if (*adapter != '/') {
+		g_free (ada_path);
+		return FALSE;
+	}
+
+	++adapter;
+
+	while (*adapter && *adapter != '/')
+		++adapter;
+
+	*adapter = '\0';
+
+	message = dbus_message_new_method_call ("org.bluez",
+						ada_path,
+						"org.bluez.Adapter",
+						"SetProperty");
+	if (!message) {
+		g_error ("Out of memory");
+	}
+
+	dbus_message_iter_init_append (message, &iter);
+	if (!dbus_message_iter_append_basic (&iter,
+				DBUS_TYPE_STRING, &prop_name) ||
+			!dbus_message_iter_open_container(&iter,
+				DBUS_TYPE_VARIANT, "b", &value) ||
+			!dbus_message_iter_append_basic(&value,
+				DBUS_TYPE_BOOLEAN, &prop_value) ||
+			!dbus_message_iter_close_container(&iter, &value)) {
+		g_error ("Out of memory");
+	}
+
+	d(g_printerr ("obex: Send power on.\n"));
+
+	dbus_error_init (&dbus_error);
+	reply = dbus_connection_send_with_reply_and_block (conn->dbus_conn,
+							   message, -1,
+							   &dbus_error);
+	
+	dbus_message_unref (message);
+
+	if (dbus_error_is_set (&dbus_error)) {
+		g_warning ("Error power on adapter (%s): %s: %s", ada_path,
+				dbus_error.name, dbus_error.message);
+
+		dbus_error_free (&dbus_error);
+		return FALSE;
+	}
+	
+	if (!reply) {
+		return FALSE;
+	}
+
+	dbus_message_unref (reply);
+
+	return TRUE;
+}
+
+static gboolean
 get_dict_property (DBusMessageIter *sub,
 		   DeviceProperties *devprops,
 		   char *uuid_filter,
@@ -396,6 +474,7 @@ get_dev (Connection     *conn,
 		g_error ("Out of memory");
 	}
 
+connect:
 	d(g_printerr ("obex: Send connect.\n"));
 
 	dbus_error_init (&dbus_error);
@@ -403,8 +482,6 @@ get_dev (Connection     *conn,
 							   message, -1,
 							   &dbus_error);
 	
-	dbus_message_unref (message);
-
 	/* The errors according to the bluez 4.X:
 	 *
 	 * org.bluez.Error.ConnectionAttemptFailed
@@ -417,6 +494,9 @@ get_dev (Connection     *conn,
 	 */
 
 	if (dbus_error_is_set (&dbus_error)) {
+		g_warning ("Error connecting to remote device (%s): %s: %s",
+				obj_path, dbus_error.name, dbus_error.message);
+
 		if (g_strcmp0 (dbus_error.name, "org.bluez.Error.DoesNotExist") == 0 ||
 		    g_strcmp0 (dbus_error.name, "org.bluez.Error.InvalidArguments") == 0) {
 			d(g_printerr ("obex: Invalid SDP profile.\n"));
@@ -427,12 +507,21 @@ get_dev (Connection     *conn,
 			d(g_printerr ("obex: Invalid BDA.\n"));
 			*result = GNOME_VFS_ERROR_SERVICE_NOT_AVAILABLE;
 		}
-		else if (g_strcmp0 (dbus_error.name, "org.bluez.Error.ConnectionAttemptFailed") == 0 ||
-			 g_strcmp0 (dbus_error.name, "org.bluez.Error.Failed") == 0) {
+		else if (g_strcmp0 (dbus_error.name, "org.bluez.Error.ConnectionAttemptFailed") == 0) {
 			d(g_printerr ("obex: GW connect failed.\n"));
 			*result = GNOME_VFS_ERROR_SERVICE_NOT_AVAILABLE;
 			// TODO: needs to be investigated when to set
 			//*already_connected = TRUE;
+		}
+		else if (g_strcmp0 (dbus_error.name, "org.bluez.Error.Failed") == 0) {
+			/* Check if adapter is powered on */
+			if (!g_strcmp0 (dbus_error.message, "No route to host")) {
+				dbus_error_free (&dbus_error);
+				if (poweron_bluetooth (conn, obj_path))
+					goto connect;
+			}
+			d(g_printerr ("obex: GW connect failed.\n"));
+			*result = GNOME_VFS_ERROR_SERVICE_NOT_AVAILABLE;
 		}
 		else if (g_strcmp0 (dbus_error.name, DBUS_ERROR_NAME_HAS_NO_OWNER) == 0 ||
 			 g_strcmp0 (dbus_error.name, DBUS_ERROR_SERVICE_UNKNOWN) == 0) {
@@ -454,10 +543,13 @@ get_dev (Connection     *conn,
 			*result = GNOME_VFS_ERROR_INTERNAL;
 		}
 
+		dbus_message_unref (message);
 		dbus_error_free (&dbus_error);
 		return NULL;
 	}
 	
+	dbus_message_unref (message);
+
 	if (!reply) {
 		*result = GNOME_VFS_ERROR_SERVICE_NOT_AVAILABLE;
 		return NULL;
