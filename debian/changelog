@@ -1,3 +1,10 @@
+osso-gnomevfs-extra (1.9.6-3+0cssu1) unstable; urgency=low
+
+  * Adopt for bluez4 used in Meamo5
+  * Add autoenable bluetooth support
+
+ -- Ludek Finstrle <luf@pzkagis.cz>  Fri, 11 Jan 2013 18:22:53 +0100
+
 osso-gnomevfs-extra (1.9.6-3) unstable; urgency=low
 
   * No change in this version, just bump the version to get rebuilt
