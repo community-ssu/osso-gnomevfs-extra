@@ -23,8 +23,13 @@ ifneq (,$(findstring noopt,$(DEB_BUILD_OPTIONS)))
 else
 	CFLAGS += -O2
 endif
-ifeq (,$(findstring nostrip,$(DEB_BUILD_OPTIONS)))
-	INSTALL_PROGRAM += -s
+
+ifeq ($(DEB_BUILD_ARCH), armel)
+	CFLAGS += -mfpu=neon -mfloat-abi=softfp
+
+ifneq (,$(findstring thumb,$(DEB_BUILD_OPTIONS)))
+	CFLAGS += -mthumb
+endif
 endif
 
 configure: configure-stamp
@@ -36,7 +41,8 @@ configure-stamp:
 	./configure $(confflags) \
 		--prefix=/usr --sysconfdir=/etc \
 		--localstatedir=/var \
-		--with-doc-dir=$(CURDIR)/debian/tmp/usr/share/doc
+		--with-doc-dir=$(CURDIR)/debian/tmp/usr/share/doc \
+		CFLAGS="$(CFLAGS)"
 
 	touch configure-stamp
 
