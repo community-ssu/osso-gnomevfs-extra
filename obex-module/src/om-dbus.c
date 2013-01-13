@@ -314,31 +314,6 @@ check_bda (const gchar *bda)
 	return TRUE;
 }
 
-static gchar *
-object_path_from_bda (const gchar *bda)
-{
-	gchar *obj_path;
-	gchar *lower = g_ascii_strdown (bda, -1);
-
-	g_mutex_lock (devices_hash_mutex);
-	obj_path = g_strdup (g_hash_table_lookup (devices_hash, lower));
-	g_mutex_unlock (devices_hash_mutex);
-	g_free (lower);
-
-	if (!obj_path) {
-		/* TODO: Find the device via DBUS and add it to the hash
- 		 * (e.g. recover from gnome-vfs-daemon crash)
- 		 */
-
-		if (obj_path) {
-			goto success;
-		}
-	}
-
-success:
-	return obj_path;
-}
-
 static gboolean
 poweron_bluetooth (Connection *conn, const gchar *obj_path)
 {
@@ -426,6 +401,32 @@ get_list_devices (Connection *conn, gchar *adaname)
 {
 	return get_dbus_message (conn, adaname, BLUEZ_ADAPTER,
 				 "ListDevices");
+}
+
+static gchar *
+find_device (Connection *conn, gchar *adapath, const gchar *bda)
+{
+	DBusMessage *reply;
+	DBusMessageIter iter;
+	gchar *dev_path, *str;
+
+	reply = get_dbus_message_param_str (conn, adapath, BLUEZ_ADAPTER,
+					    "FindDevice", bda);
+	if (!reply) {
+		return NULL;
+	}
+
+	if (!dbus_message_iter_init (reply, &iter) ||
+	    dbus_message_iter_get_arg_type (&iter) != DBUS_TYPE_OBJECT_PATH) {
+		dbus_message_unref (reply);
+		return NULL;
+	}
+
+	dbus_message_iter_get_basic (&iter, &str);
+	dev_path = g_strdup (str);
+	dbus_message_unref (reply);
+
+	return dev_path;
 }
 
 static gboolean
@@ -630,6 +631,74 @@ connect:
 	return dev;
 }
 
+static gchar *
+object_path_from_bda (Connection *conn, const gchar *bda)
+{
+	gchar *obj_path;
+	gchar *lower = g_ascii_strdown (bda, -1);
+
+	g_mutex_lock (devices_hash_mutex);
+	obj_path = g_strdup (g_hash_table_lookup (devices_hash, lower));
+	g_mutex_unlock (devices_hash_mutex);
+
+	if (!obj_path) {
+		/* Find the device via DBUS and add it to the hash
+ 		 * (e.g. recover from gnome-vfs-daemon crash)
+ 		 */
+		DBusMessage     *reply;
+		DBusMessageIter iter, adas;
+		gchar           *path;
+	       
+		reply = get_list_adapters (conn);
+		if (!reply) {
+			g_free (lower);
+			return NULL;
+		}
+
+		if (!dbus_message_iter_init (reply, &iter) ||
+		    dbus_message_iter_get_arg_type (&iter) != DBUS_TYPE_ARRAY) {
+			dbus_message_unref (reply);
+			g_free (lower);
+			return NULL;
+		}
+
+		dbus_message_iter_recurse (&iter, &adas);
+
+		do {
+			if (dbus_message_iter_get_arg_type (&adas) != DBUS_TYPE_OBJECT_PATH) {
+				continue;
+			}
+
+			dbus_message_iter_get_basic (&adas, &path);
+			if (!path || !*path) {
+				continue;
+			}
+
+			obj_path = find_device (conn, path, bda);
+			if (obj_path) {
+				dbus_message_unref (reply);
+
+				g_mutex_lock (devices_hash_mutex);
+				g_hash_table_insert (devices_hash,
+					lower, g_strdup (obj_path));
+				g_mutex_unlock (devices_hash_mutex);
+
+				goto success;
+			}
+		} while (dbus_message_iter_next (&adas));
+
+		dbus_message_unref (reply);
+		g_free (lower);
+
+		return NULL;
+	}
+
+	g_free (lower);
+
+success:
+	return obj_path;
+}
+
 void
 om_dbus_init (void)
 {
@@ -682,7 +751,7 @@ om_dbus_get_dev (void *dev_conn,
 		goto free_dev;
 	}
 
-	obj_path = object_path_from_bda (bda);
+	obj_path = object_path_from_bda (conn, bda);
 	if (!obj_path) {
 		*result = GNOME_VFS_ERROR_INVALID_URI;
 		goto free;
@@ -735,7 +804,7 @@ om_dbus_disconnect_dev (void *dev_conn, const gchar *bda, const gchar *dev)
 		return;
 	}
 	
-	obj_path = object_path_from_bda (bda);
+	obj_path = object_path_from_bda (*conn, bda);
 	if (obj_path) {
 		send_disconnect (*conn, obj_path, bda, dev);
 		g_free (obj_path);
