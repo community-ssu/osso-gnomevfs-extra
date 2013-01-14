@@ -1,3 +1,10 @@
+osso-gnomevfs-extra (1.9.6-3+0cssu2) unstable; urgency=low
+
+  * Fix surviving gnome-vfs-daemon failure (e.g. kill or crash)
+  * Some code cleanup with correcting some typos
+
+ -- Ludek Finstrle <luf@pzkagis.cz>  Sun, 14 Jan 2013 01:00:12 +0100
+
 osso-gnomevfs-extra (1.9.6-3+0cssu1) unstable; urgency=low
 
   * Adopt for bluez4 used in Meamo5
