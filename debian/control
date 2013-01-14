@@ -8,7 +8,7 @@ Standards-Version: 3.6.1.0
 Package: osso-gnomevfs-extra
 Section: libs
 Architecture: any
-Depends: ${shlibs:Depends}, libgwobex0, libhildonfm2 (>= 2.28.22+0cssu3), osso-connectivity-ui-l10n-mr0
+Depends: ${shlibs:Depends}, bluez (>= 4.60), libgwobex0, libhildonfm2 (>= 2.28.22+0cssu3), osso-connectivity-ui-l10n-mr0
 Replaces: osso-gnomevfs-backend
 Conflicts: osso-gnomevfs-backend
 Provides: osso-gnomevfs-backend
